@@ -1,81 +1,115 @@
-import yfinance as yf
-import talib
-import pandas as pd
-from telegram import Bot
-from telegram.ext import Application, CommandHandler, CallbackContext
-from telegram import Update
-import asyncio
+import telebot
+import json
+import os
+import threading
 
-# توكن البوت
-bot = Bot(token="8052080147:AAF5YvAz0onMcFxV4A_aKQpzw4l_QIefttk")
+# توكن البوت الخاص بك
+BOT_TOKEN = 'YOUR_BOT_TOKEN'  # ضع توكن البوت هنا
+bot = telebot.TeleBot(BOT_TOKEN)
 
-# معرّف القناة أو المحادثة
-chat_id = "@jsissgo"
+# إعدادات الأمان
+المستخدمين_المسموح_لهم = {"The_engineer09"}  # إضافة المستخدم الجديد
+المستخدمين_مفعلين = set()
 
-# لائحة أزواج العملات
-currency_pairs = ['EURUSD=X', 'GBPUSD=X', 'USDJPY=X', 'AUDUSD=X', 'USDCHF=X', 'NZDUSD=X']
+# لتخزين آخر رسالة تم نشرها
+آخر_رسالة = {
+    "chat_id": None,
+    "message_id": None
+}
 
-# حساب المؤشرات الفنية لكل زوج من العملات
-def calculate_indicators(pair):
-    df = yf.download(pair, period="1d", interval="1m")
-    
-    # حساب المؤشرات الفنية باستخدام TA-Lib
-    df['RSI'] = talib.RSI(df['Close'], timeperiod=14)
-    df['MACD'], df['MACD_signal'], df['MACD_hist'] = talib.MACD(df['Close'], fastperiod=12, slowperiod=26, signalperiod=9)
-    df['EMA'] = talib.EMA(df['Close'], timeperiod=9)
-    
-    return df
+# -------------------------------------------------------
+# تحميل أو إنشاء ملف تخزين القنوات
+file_path = "channels.json"
+if os.path.exists(file_path):
+    with open(file_path, "r") as f:
+        القنوات_المحفوظة = json.load(f)
+else:
+    القنوات_المحفوظة = {}
 
-# حساب إشارات الدخول بناءً على المؤشرات
-def generate_signal(pair, df):
-    # الحصول على آخر القيم للمؤشرات
-    latest_rsi = df['RSI'].iloc[-1]
-    latest_macd = df['MACD'].iloc[-1]
-    latest_ema = df['EMA'].iloc[-1]
-    
-    signal = f"إشارة الدخول لـ {pair}:\n"
-    
-    # إشارات RSI
-    if latest_rsi > 70:
-        signal += f"RSI مرتفع: {latest_rsi} - يمكن أن يكون هذا وقت البيع.\n"
-    elif latest_rsi < 30:
-        signal += f"RSI منخفض: {latest_rsi} - يمكن أن يكون هذا وقت الشراء.\n"
+def حفظ_معرف_قناة(المعرف):
+    if المعرف not in القنوات_المحفوظة.values():
+        الرقم = str(len(القنوات_المحفوظة) + 1)
+        القنوات_المحفوظة[الرقم] = المعرف
+        with open(file_path, "w") as f:
+            json.dump(القنوات_المحفوظة, f, ensure_ascii=False, indent=2)
+
+# -------------------------------------------------------
+# /start و التحقق من الاسم
+@bot.message_handler(commands=['start'])
+def البداية(message):
+    username = message.from_user.username
+    if username not in المستخدمين_المسموح_لهم:
+        bot.send_message(message.chat.id, "عذرًا، ليس لديك صلاحية استخدام هذا البوت.")
+        return
+
+    if message.from_user.id in المستخدمين_مفعلين:
+        متابعة_البداية(message)
     else:
-        signal += f"RSI: {latest_rsi} - السوق في حالة محايدة.\n"
-    
-    # إشارات MACD
-    if latest_macd > 0:
-        signal += f"MACD إيجابي: {latest_macd} - يمكن أن يكون هذا وقت الشراء.\n"
+        msg = bot.send_message(message.chat.id, "أدخل كلمة السر:")
+        bot.register_next_step_handler(msg, تحقق_كلمة_السر)
+
+def تحقق_كلمة_السر(message):
+    if message.text.strip() == "853974":  # كلمة السر
+        المستخدمين_مفعلين.add(message.from_user.id)
+        bot.send_message(message.chat.id, "كلمة السر صحيحة! يمكنك الآن استخدام الأوامر.")
+        متابعة_البداية(message)
     else:
-        signal += f"MACD سلبي: {latest_macd} - يمكن أن يكون هذا وقت البيع.\n"
-    
-    # إشارات EMA
-    if latest_ema > df['Close'].iloc[-2]:  # مقارنة مع القيمة السابقة
-        signal += f"EMA صاعد: {latest_ema} - السوق في اتجاه صاعد.\n"
+        bot.send_message(message.chat.id, "كلمة السر غير صحيحة، حاول مرة أخرى.")
+
+def متابعة_البداية(message):
+    msg = bot.send_message(message.chat.id, "اكتب معرف القناة (مثال: @mychannel):")
+    bot.register_next_step_handler(msg, استلام_المعرف)
+
+# -------------------------------------------------------
+# إضافة مستخدم جديد
+@bot.message_handler(commands=['add_user'])
+def إضافة_مستخدم(message):
+    # تحقق من أن المستخدم هو صاحب البوت
+    if message.from_user.username == "The_engineer09":  # يمكنك تغيير هذا للتأكد من أن المستخدم صاحب البوت
+        msg = bot.send_message(message.chat.id, "أدخل اسم المستخدم لإضافته:")
+        bot.register_next_step_handler(msg, استلام_مستخدم_جديد)
     else:
-        signal += f"EMA هابط: {latest_ema} - السوق في اتجاه هابط.\n"
-    
-    return signal
+        bot.send_message(message.chat.id, "عذراً، ليس لديك صلاحية لإضافة مستخدمين.")
 
-# إعدادات الأوامر الخاصة بالبوت
-async def start(update: Update, context: CallbackContext):
-    await update.message.reply_text("مرحبًا! أنا بوت التداول. استخدم /signals للحصول على إشارات الدخول لأزواج العملات.")
+def استلام_مستخدم_جديد(message):
+    user = message.text.strip()
+    if user not in المستخدمين_المسموح_لهم:
+        المستخدمين_المسموح_لهم.add(user)
+        bot.send_message(message.chat.id, f"تم إضافة {user} إلى قائمة المستخدمين المسموح لهم.")
+    else:
+        bot.send_message(message.chat.id, f"{user} هو بالفعل في قائمة المستخدمين المسموح لهم.")
 
-async def signals(update: Update, context: CallbackContext):
-    for pair in currency_pairs:
-        df = calculate_indicators(pair)
-        signal = generate_signal(pair, df)
-        
-        # إرسال الإشارة إلى القناة
-        await bot.send_message(chat_id=chat_id, text=signal)
-        await update.message.reply_text(signal)
+# -------------------------------------------------------
+# استلام معلومات النشر
+@bot.message_handler(func=lambda m: False)
+def استلام_المعرف(message):
+    معرف_القناة = message.text.strip()
+    msg = bot.send_message(message.chat.id, "اكتب النص الذي تريد نشره:")
+    bot.register_next_step_handler(msg, استلام_النص, معرف_القناة)
 
-# لتشغيل البوت داخل Google Colab باستخدام asyncio
-def run_bot():
-    application = Application.builder().token("8052080147:AAF5YvAz0onMcFxV4A_aKQpzw4l_QIefttk").build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("signals", signals))
-    application.run_polling()
+def استلام_النص(message, المعرف):
+    النص = message.text.strip()
+    msg = bot.send_message(message.chat.id, "اكتب نص الزر:")
+    bot.register_next_step_handler(msg, استلام_نص_الزر, المعرف, النص)
 
-# استخدام asyncio.run لتشغيل البوت في Google Colab
-asyncio.run(run_bot())
+def استلام_نص_الزر(message, المعرف, النص):
+    نص_الزر = message.text.strip()
+    msg = bot.send_message(message.chat.id, "أرسل الرابط الذي سيفتح عند الضغط على الزر:")
+    bot.register_next_step_handler(msg, إرسال, المعرف, النص, نص_الزر)
+
+def إرسال(message, المعرف, النص, نص_الزر):
+    الرابط = message.text.strip()
+    markup = telebot.types.InlineKeyboardMarkup()
+    button = telebot.types.InlineKeyboardButton(text=نص_الزر, url=الرابط)
+    markup.add(button)
+
+    sent = bot.send_message(chat_id=المعرف, text=النص, reply_markup=markup)
+    آخر_رسالة["chat_id"] = المعرف
+    آخر_رسالة["message_id"] = sent.message_id
+
+    حفظ_معرف_قناة(المعرف)
+    bot.send_message(message.chat.id, "تم نشر الرسالة في القناة!")
+
+# -------------------------------------------------------
+# تشغيل البوت باستخدام polling بدلاً من webhook
+bot.polling(none_stop=True)
